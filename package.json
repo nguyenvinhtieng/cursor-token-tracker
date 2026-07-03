@@ -114,8 +114,19 @@
   "scripts": {
     "compile": "node esbuild.js",
     "watch": "node esbuild.js --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist *.vsix",
     "package": "npm run compile && vsce package",
-    "buildinstall": "rm -rf cursor-usage-tracker-0.1.0.vsix && vsce package && cursor --install-extension cursor-usage-tracker-0.1.0.vsix"
+    "install:local": "cursor --install-extension $(ls -t *.vsix | head -n1)",
+    "buildinstall": "npm run clean && npm run package && npm run install:local",
+    "version:patch": "npm version patch -m \"chore(release): v%s\"",
+    "version:minor": "npm version minor -m \"chore(release): v%s\"",
+    "version:major": "npm version major -m \"chore(release): v%s\"",
+    "publish": "vsce publish",
+    "publish:patch": "vsce publish patch -m \"chore(release): v%s\"",
+    "publish:minor": "vsce publish minor -m \"chore(release): v%s\"",
+    "publish:major": "vsce publish major -m \"chore(release): v%s\"",
+    "release": "npm run compile && vsce publish"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
