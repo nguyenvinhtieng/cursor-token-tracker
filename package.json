@@ -1,0 +1,133 @@
+{
+  "name": "cursor-usage-tracker",
+  "displayName": "Cursor Usage Tracker",
+  "description": "Show Cursor AI spend and tokens in the status bar",
+  "version": "0.1.0",
+  "publisher": "nguyenvinhtieng",
+  "author": {
+    "name": "nguyenvinhtieng.vn"
+  },
+  "license": "MIT",
+  "icon": "images/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nguyenvinhtieng/cursor-token-tracker"
+  },
+  "homepage": "https://github.com/nguyenvinhtieng/cursor-token-tracker#readme",
+  "bugs": {
+    "url": "https://github.com/nguyenvinhtieng/cursor-token-tracker/issues"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "cursorUsage.refresh",
+        "title": "Cursor Usage: Refresh"
+      },
+      {
+        "command": "cursorUsage.setToken",
+        "title": "Cursor Usage: Set Session Token"
+      },
+      {
+        "command": "cursorUsage.resetSession",
+        "title": "Cursor Usage: Reset Chat Session"
+      },
+      {
+        "command": "cursorUsage.showDetails",
+        "title": "Cursor Usage: Show Details"
+      },
+      {
+        "command": "cursorUsage.openDashboard",
+        "title": "Cursor Usage: Open Dashboard"
+      },
+      {
+        "command": "cursorUsage.diagnoseAuth",
+        "title": "Cursor Usage: Diagnose Auth"
+      },
+      {
+        "command": "cursorUsage.clearToken",
+        "title": "Cursor Usage: Clear Saved Token"
+      }
+    ],
+    "configuration": {
+      "title": "Cursor Usage Tracker",
+      "properties": {
+        "cursorUsage.refreshIntervalSeconds": {
+          "type": "number",
+          "default": 60,
+          "minimum": 30,
+          "description": "Refresh interval in seconds"
+        },
+        "cursorUsage.autoDetectToken": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically read token from Cursor state.vscdb"
+        },
+        "cursorUsage.displayFormat": {
+          "type": "string",
+          "enum": [
+            "compact",
+            "full"
+          ],
+          "default": "compact",
+          "description": "Deprecated — status bar always shows Monthly total | Today"
+        },
+        "cursorUsage.showTokens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show token counts in tooltip and detail panel"
+        },
+        "cursorUsage.monthlyBudget": {
+          "type": "number",
+          "default": 100,
+          "minimum": 1,
+          "description": "Company monthly budget in USD (shown as $used/$budget in status bar)"
+        },
+        "cursorUsage.limitPercent": {
+          "type": "number",
+          "default": 100,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Usage limit as percent of monthly budget (e.g. 90 = warning at 90% of budget)"
+        },
+        "cursorUsage.activeChatRefreshSeconds": {
+          "type": "number",
+          "default": 10,
+          "minimum": 5,
+          "description": "Refresh interval in seconds while a chat session is active"
+        },
+        "cursorUsage.showBudgetPercent": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show budget usage percentage in status bar"
+        },
+        "cursorUsage.stateDbPath": {
+          "type": "string",
+          "default": "",
+          "description": "Custom path to Cursor state.vscdb (leave empty for auto-detect)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "npm run compile && vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.1",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.5.0"
+  }
+}
