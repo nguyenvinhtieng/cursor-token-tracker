@@ -26,9 +26,6 @@ export function buildTooltipMarkdown(
     md.appendMarkdown(`**Budget limit reached**\n\n`);
   }
   md.appendMarkdown(`**Monthly budget** · ${formatDollars(metrics.monthlyUsed)} / ${formatDollars(settings.monthlyBudget)} (${pct.toFixed(1)}%)\n\n`);
-  if (settings.limitPercent < 100) {
-    md.appendMarkdown(`_Limit cap: ${settings.limitPercent}% ($${(settings.monthlyBudget * settings.limitPercent / 100).toFixed(2)})_\n\n`);
-  }
   md.appendMarkdown(`${renderProgressBar(pct)}\n\n`);
   md.appendMarkdown(`_${formatDollars(remaining)} remaining this month_\n\n`);
   md.appendMarkdown(`**Current chat** · ${formatChatSessionStatus(chatSession)}`);

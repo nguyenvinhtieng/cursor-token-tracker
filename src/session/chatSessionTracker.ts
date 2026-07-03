@@ -8,7 +8,7 @@ function slugifyWorkspaceFolder(folder: string): string {
   return folder.replace(/^[/\\]+/, '').replace(/[/\\:.]/g, '-');
 }
 
-function getTranscriptDirForWorkspace(): string | undefined {
+export function getTranscriptDirForWorkspace(): string | undefined {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders || folders.length === 0) {
     return undefined;

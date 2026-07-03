@@ -1,9 +1,9 @@
 {
   "name": "cursor-usage-tracker",
-  "displayName": "Cursor Usage Tracker",
+  "displayName": "Cursor Token Tracker",
   "description": "Show Cursor AI spend and tokens in the status bar",
   "version": "0.1.0",
-  "publisher": "NguyenVinhTieng",
+  "publisher": "nguyenvinhtieng",
   "author": {
     "name": "nguyenvinhtieng.vn"
   },
@@ -90,14 +90,7 @@
           "type": "number",
           "default": 100,
           "minimum": 1,
-          "description": "Company monthly budget in USD (shown as $used/$budget in status bar)"
-        },
-        "cursorUsage.limitPercent": {
-          "type": "number",
-          "default": 100,
-          "minimum": 1,
-          "maximum": 100,
-          "description": "Usage limit as percent of monthly budget (e.g. 90 = warning at 90% of budget)"
+          "description": "Monthly spending limit in USD (shown as $used/$limit in status bar)"
         },
         "cursorUsage.activeChatRefreshSeconds": {
           "type": "number",
@@ -121,7 +114,8 @@
   "scripts": {
     "compile": "node esbuild.js",
     "watch": "node esbuild.js --watch",
-    "package": "npm run compile && vsce package"
+    "package": "npm run compile && vsce package",
+    "buildinstall": "rm -rf cursor-usage-tracker-0.1.0.vsix && vsce package && cursor --install-extension cursor-usage-tracker-0.1.0.vsix"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

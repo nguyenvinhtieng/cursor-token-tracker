@@ -52,7 +52,12 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
     isRefreshing = true;
-    statusBar.showLoading();
+    // Only blank the bar to a spinner on the very first load. Background polls
+    // keep the current numbers visible to avoid flicker; the "thinking" spinner
+    // while a chat is active is handled separately in StatusBarController.update.
+    if (!statusBar.getMetrics()) {
+      statusBar.showLoading();
+    }
 
     try {
       const token = await tokenReader.getToken();
