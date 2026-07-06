@@ -103,6 +103,22 @@
           "default": true,
           "description": "Show budget usage percentage in status bar"
         },
+        "cursorUsage.chatSessionAlertThreshold": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0,
+          "description": "Alert when current chat session spend reaches this USD amount (0 = disabled). Shown on a separate status bar item."
+        },
+        "cursorUsage.chatAlertBackground": {
+          "type": "string",
+          "enum": [
+            "prominent",
+            "warning",
+            "error"
+          ],
+          "default": "error",
+          "description": "Status bar background for chat session alert (separate from monthly budget warning colors)"
+        },
         "cursorUsage.stateDbPath": {
           "type": "string",
           "default": "",
@@ -126,7 +142,14 @@
     "publish:patch": "vsce publish patch -m \"chore(release): v%s\"",
     "publish:minor": "vsce publish minor -m \"chore(release): v%s\"",
     "publish:major": "vsce publish major -m \"chore(release): v%s\"",
-    "release": "npm run compile && vsce publish"
+    "release": "npm run compile && vsce publish",
+    "release:patch": "npm run version:patch &&npm run compile && vsce publish",
+    "release:minor": "npm run version:minor &&npm run compile && vsce publish",
+    "release:major": "npm run version:major &&npm run compile && vsce publish",
+    "gh-release": "npm run package && gh release create v$npm_package_version $(ls -t *.vsix | head -n1) --title \"v$npm_package_version\" --generate-notes",
+    "gh-release:patch": "npm run version:patch && npm run gh-release",
+    "gh-release:minor": "npm run version:minor && npm run gh-release",
+    "gh-release:major": "npm run version:major && npm run gh-release"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

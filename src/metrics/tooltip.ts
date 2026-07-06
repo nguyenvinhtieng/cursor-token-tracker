@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { UsageMetrics } from './aggregator';
 import { ChatSessionDisplay, formatChatSessionStatus } from './chatSessionDisplay';
-import { BudgetSettings, getUsagePercent, isLimitReached } from '../config/budgetConfig';
+import { BudgetSettings, getUsagePercent, isChatSessionAlertExceeded, isLimitReached } from '../config/budgetConfig';
 import { PeriodTotals, formatDollars, formatTokens, parseEventCostDollars, parseEventTokens } from './format';
 
 export function buildTooltipMarkdown(
@@ -28,7 +28,14 @@ export function buildTooltipMarkdown(
   md.appendMarkdown(`**Monthly budget** · ${formatDollars(metrics.monthlyUsed)} / ${formatDollars(settings.monthlyBudget)} (${pct.toFixed(1)}%)\n\n`);
   md.appendMarkdown(`${renderProgressBar(pct)}\n\n`);
   md.appendMarkdown(`_${formatDollars(remaining)} remaining this month_\n\n`);
+  const chatAlertExceeded = isChatSessionAlertExceeded(chatSession.cost, settings.chatSessionAlertThreshold);
+  if (chatAlertExceeded) {
+    md.appendMarkdown(`**Chat session alert** · over ${formatDollars(settings.chatSessionAlertThreshold)} limit\n\n`);
+  }
   md.appendMarkdown(`**Current chat** · ${formatChatSessionStatus(chatSession)}`);
+  if (settings.chatSessionAlertThreshold > 0 && !chatAlertExceeded) {
+    md.appendMarkdown(` _(alert at ${formatDollars(settings.chatSessionAlertThreshold)})_`);
+  }
   if (chatSession.fromLastEvent) {
     md.appendMarkdown(` _(latest API call — session counter still warming up)_`);
   }

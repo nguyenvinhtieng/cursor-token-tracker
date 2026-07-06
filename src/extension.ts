@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
 import { TokenReader } from './auth/tokenReader';
 import { CursorApiError, CursorUsageClient } from './api/client';
+import { getBudgetSettings } from './config/budgetConfig';
 import { fetchUsageMetrics, UsageMetrics } from './metrics/aggregator';
+import { formatDollars } from './metrics/format';
 import { ChatSessionTracker } from './session/chatSessionTracker';
 import { DetailPanel } from './ui/detailPanel';
 import { StatusBarController } from './ui/statusBar';
@@ -10,6 +12,7 @@ let refreshTimer: NodeJS.Timeout | undefined;
 let activeChatTimer: NodeJS.Timeout | undefined;
 let isRefreshing = false;
 let lastActivityRefreshMs = 0;
+let chatAlertNotifiedForSessionMs = 0;
 
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel('Cursor Usage Tracker');
@@ -24,6 +27,25 @@ export function activate(context: vscode.ExtensionContext): void {
     statusBar.setChatActive(sessionTracker.isChatActive());
     statusBar.update(metrics, sessionTracker.getSessionStartMs());
     detailPanel.updateIfOpen(metrics, statusBar.getSessionTotals());
+    maybeNotifyChatAlert(sessionTracker.getSessionStartMs(), statusBar);
+  };
+
+  const maybeNotifyChatAlert = (sessionStartMs: number, bar: StatusBarController): void => {
+    const settings = getBudgetSettings();
+    if (settings.chatSessionAlertThreshold <= 0) {
+      return;
+    }
+    if (!bar.isChatAlertExceeded()) {
+      return;
+    }
+    if (chatAlertNotifiedForSessionMs === sessionStartMs) {
+      return;
+    }
+    chatAlertNotifiedForSessionMs = sessionStartMs;
+    const cost = bar.getChatSession().cost;
+    void vscode.window.showWarningMessage(
+      `Cursor Usage: current chat session reached ${formatDollars(cost)} (alert at ${formatDollars(settings.chatSessionAlertThreshold)}).`,
+    );
   };
 
   const logDiagnose = async (): Promise<void> => {
@@ -143,6 +165,7 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   sessionTracker.setOnSessionChange(() => {
+    chatAlertNotifiedForSessionMs = 0;
     const metrics = statusBar.getMetrics();
     if (metrics) {
       applyMetrics(metrics);
@@ -185,6 +208,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('cursorUsage.resetSession', () => {
       sessionTracker.reset();
+      chatAlertNotifiedForSessionMs = 0;
       const metrics = statusBar.getMetrics();
       if (metrics) {
         applyMetrics(metrics);

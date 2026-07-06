@@ -1,13 +1,16 @@
 import * as vscode from 'vscode';
 import { UsageMetrics, computeSessionTotals } from '../metrics/aggregator';
-import { resolveChatSessionDisplay } from '../metrics/chatSessionDisplay';
+import { resolveChatSessionDisplay, ChatSessionDisplay } from '../metrics/chatSessionDisplay';
 import { buildTooltipMarkdown } from '../metrics/tooltip';
 import { ThreadUsage } from '../session/threadIndex';
 import {
   BudgetSettings,
   budgetBarPercent,
+  chatAlertThemeColor,
   getBudgetSettings,
+  getChatSessionUsagePercent,
   getUsagePercent,
+  isChatSessionAlertExceeded,
   isLimitReached,
 } from '../config/budgetConfig';
 import {
@@ -22,29 +25,35 @@ import {
 } from '../metrics/format';
 
 export class StatusBarController {
-  private item: vscode.StatusBarItem;
+  private budgetItem: vscode.StatusBarItem;
+  private chatItem: vscode.StatusBarItem;
   private metrics: UsageMetrics | undefined;
   private sessionTotals: PeriodTotals = { cost: 0, tokens: 0, eventCount: 0 };
+  private chatSession: ChatSessionDisplay = { cost: 0, tokens: 0, fromLastEvent: false };
   private chatActive = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {
-    this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 50);
-    this.item.command = 'cursorUsage.showDetails';
-    this.context.subscriptions.push(this.item);
+    this.budgetItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 50);
+    this.budgetItem.command = 'cursorUsage.showDetails';
+    this.chatItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 49);
+    this.chatItem.command = 'cursorUsage.showDetails';
+    this.context.subscriptions.push(this.budgetItem, this.chatItem);
   }
 
   showLoading(): void {
-    this.item.text = '$(sync~spin) Cursor Usage';
-    this.item.tooltip = 'Loading usage data…';
-    this.item.backgroundColor = undefined;
-    this.item.show();
+    this.budgetItem.text = '$(sync~spin) Cursor Usage';
+    this.budgetItem.tooltip = 'Loading usage data…';
+    this.budgetItem.backgroundColor = undefined;
+    this.budgetItem.show();
+    this.chatItem.hide();
   }
 
   showError(message: string): void {
-    this.item.text = '$(warning) Cursor Usage';
-    this.item.tooltip = message;
-    this.item.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-    this.item.show();
+    this.budgetItem.text = '$(warning) Cursor Usage';
+    this.budgetItem.tooltip = message;
+    this.budgetItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+    this.budgetItem.show();
+    this.chatItem.hide();
   }
 
   setChatActive(active: boolean): void {
@@ -60,18 +69,44 @@ export class StatusBarController {
     const usagePct = getUsagePercent(monthlyUsed, settings.monthlyBudget);
     const remaining = Math.max(0, settings.monthlyBudget - monthlyUsed);
     const chatSession = resolveChatSessionDisplay(this.sessionTotals, metrics.lastEvent);
+    this.chatSession = chatSession;
     const pctLabel = settings.showBudgetPercent ? ` (${usagePct.toFixed(0)}%)` : '';
-    const chatSuffix = this.chatActive ? ` | $(sync~spin) ${formatDollarsCompact(chatSession.cost)}` : '';
 
-    this.item.text =
+    this.budgetItem.text =
       `$(graph) ${formatDollarsCompact(monthlyUsed)}/${formatDollarsCompact(settings.monthlyBudget)}${pctLabel}` +
       ` · ${formatDollarsCompact(remaining)} left` +
-      ` | Today ${formatDollarsCompact(metrics.today.cost)}` +
-      chatSuffix;
+      ` | Today ${formatDollarsCompact(metrics.today.cost)}`;
 
-    this.item.tooltip = buildTooltipMarkdown(metrics, this.sessionTotals, settings, chatSession);
-    this.item.backgroundColor = budgetBackgroundColor(usagePct);
-    this.item.show();
+    this.budgetItem.tooltip = buildTooltipMarkdown(metrics, this.sessionTotals, settings, chatSession);
+    this.budgetItem.backgroundColor = budgetBackgroundColor(usagePct);
+    this.budgetItem.show();
+
+    this.updateChatItem(chatSession, settings);
+  }
+
+  private updateChatItem(chatSession: ChatSessionDisplay, settings: BudgetSettings): void {
+    const showChat = this.chatActive || chatSession.cost > 0 || chatSession.tokens > 0;
+    if (!showChat) {
+      this.chatItem.hide();
+      return;
+    }
+
+    const alertExceeded = isChatSessionAlertExceeded(chatSession.cost, settings.chatSessionAlertThreshold);
+    const chatPct = getChatSessionUsagePercent(chatSession.cost, settings.chatSessionAlertThreshold);
+    const icon = this.chatActive
+      ? '$(sync~spin)'
+      : alertExceeded
+        ? '$(warning)'
+        : '$(comment-discussion)';
+    const costLabel = formatDollarsCompact(chatSession.cost);
+    const tokenLabel = formatTokens(chatSession.tokens);
+
+    this.chatItem.text = `${icon} Chat ${costLabel}`;
+    this.chatItem.tooltip = buildChatTooltip(chatSession, settings, alertExceeded, chatPct, tokenLabel, costLabel);
+    this.chatItem.backgroundColor = alertExceeded
+      ? chatAlertThemeColor(settings.chatAlertBackground)
+      : undefined;
+    this.chatItem.show();
   }
 
   getMetrics(): UsageMetrics | undefined {
@@ -80,6 +115,15 @@ export class StatusBarController {
 
   getSessionTotals(): PeriodTotals {
     return this.sessionTotals;
+  }
+
+  isChatAlertExceeded(): boolean {
+    const settings = getBudgetSettings();
+    return isChatSessionAlertExceeded(this.chatSession.cost, settings.chatSessionAlertThreshold);
+  }
+
+  getChatSession(): ChatSessionDisplay {
+    return this.chatSession;
   }
 }
 
@@ -93,15 +137,37 @@ function budgetBackgroundColor(usagePercent: number): vscode.ThemeColor | undefi
   return undefined;
 }
 
+function buildChatTooltip(
+  chatSession: ChatSessionDisplay,
+  settings: BudgetSettings,
+  alertExceeded: boolean,
+  chatPct: number,
+  tokenLabel: string,
+  costLabel: string,
+): string {
+  const lines = ['Current chat session', `${tokenLabel} tokens · ${costLabel}`];
+  if (chatSession.fromLastEvent) {
+    lines.push('Latest API call — session counter still warming up');
+  }
+  if (settings.chatSessionAlertThreshold > 0) {
+    lines.push(
+      alertExceeded
+        ? `Alert: over ${formatDollars(settings.chatSessionAlertThreshold)} limit (${chatPct.toFixed(0)}%)`
+        : `Alert at ${formatDollars(settings.chatSessionAlertThreshold)} (${chatPct.toFixed(0)}%)`,
+    );
+  }
+  lines.push('Click for details');
+  return lines.join('\n');
+}
+
 export interface DashboardSettings {
   monthlyBudget: number;
 }
 
 export function renderDetailHtml(
   metrics: UsageMetrics,
-  sessionTotals: PeriodTotals,
+  _sessionTotals: PeriodTotals,
   settings: BudgetSettings,
-  chatSessionCost: number,
   threads: ThreadUsage[] = [],
 ): string {
   const cycleStart = new Date(metrics.summary.billingCycleStart).toLocaleDateString();
@@ -112,6 +178,11 @@ export function renderDetailHtml(
   const remaining = Math.max(0, settings.monthlyBudget - metrics.monthlyUsed);
   const statusLevel = usagePct >= 95 ? 'danger' : usagePct >= 80 ? 'warn' : 'ok';
   const statusText = limitReached ? 'Limit reached' : statusLevel === 'warn' ? 'Approaching limit' : 'On track';
+
+  const chatThresholdLabel =
+    settings.chatSessionAlertThreshold > 0
+      ? formatDollars(settings.chatSessionAlertThreshold)
+      : 'Off';
 
   const summaryCards = `
     <section class="budget-card status-${statusLevel} ${limitReached ? 'limit-reached' : ''}">
@@ -141,8 +212,8 @@ export function renderDetailHtml(
 
     <details class="settings-fold" id="settingsFold">
       <summary class="settings-summary">
-        <span class="settings-title">⚙ Budget settings</span>
-        <span class="settings-preview">Limit ${escapeHtml(formatDollars(settings.monthlyBudget))}</span>
+        <span class="settings-title">⚙ Usage alerts</span>
+        <span class="settings-preview">Budget ${escapeHtml(formatDollars(settings.monthlyBudget))} · Chat ${escapeHtml(chatThresholdLabel)}</span>
       </summary>
       <div class="settings-body">
         <label class="settings-field">
@@ -151,6 +222,21 @@ export function renderDetailHtml(
             <span class="input-prefix">$</span>
             <input type="number" id="monthlyBudget" min="1" step="1" value="${settings.monthlyBudget}" />
           </div>
+        </label>
+        <label class="settings-field">
+          <span>Chat alert (USD)</span>
+          <div class="input-wrap">
+            <span class="input-prefix">$</span>
+            <input type="number" id="chatSessionAlertThreshold" min="0" step="0.5" value="${settings.chatSessionAlertThreshold}" />
+          </div>
+        </label>
+        <label class="settings-field">
+          <span>Chat alert color</span>
+          <select id="chatAlertBackground">
+            <option value="prominent" ${settings.chatAlertBackground === 'prominent' ? 'selected' : ''}>Prominent (purple)</option>
+            <option value="warning" ${settings.chatAlertBackground === 'warning' ? 'selected' : ''}>Warning (amber)</option>
+            <option value="error" ${settings.chatAlertBackground === 'error' ? 'selected' : ''}>Error (red)</option>
+          </select>
         </label>
         <div class="settings-actions">
           <button id="saveSettings" class="primary-btn">Save</button>
@@ -264,6 +350,8 @@ export function renderDetailHtml(
     .input-wrap:focus-within { border-color: var(--vscode-focusBorder); }
     .input-prefix { padding: 0 4px 0 11px; opacity: 0.55; font-size: 0.9rem; }
     .input-wrap input { width: 120px; padding: 7px 11px 7px 2px; border: none; background: transparent; color: var(--vscode-input-foreground); font-size: 0.9rem; outline: none; }
+    .settings-field select { padding: 7px 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); font-size: 0.82rem; outline: none; }
+    .settings-field select:focus { border-color: var(--vscode-focusBorder); }
     .settings-actions { display: flex; align-items: center; gap: 12px; }
     .primary-btn { padding: 7px 18px; border-radius: 8px; border: none; background: var(--vscode-button-background); color: var(--vscode-button-foreground); font-size: 0.82rem; font-weight: 550; cursor: pointer; }
     .primary-btn:hover { background: var(--vscode-button-hoverBackground); }
@@ -310,7 +398,9 @@ export function renderDetailHtml(
     });
     document.getElementById('saveSettings').addEventListener('click', () => {
       const monthlyBudget = Number(document.getElementById('monthlyBudget').value);
-      vscode.postMessage({ type: 'saveSettings', monthlyBudget });
+      const chatSessionAlertThreshold = Number(document.getElementById('chatSessionAlertThreshold').value);
+      const chatAlertBackground = document.getElementById('chatAlertBackground').value;
+      vscode.postMessage({ type: 'saveSettings', monthlyBudget, chatSessionAlertThreshold, chatAlertBackground });
       const status = document.getElementById('saveStatus');
       status.hidden = false;
       setTimeout(() => { status.hidden = true; }, 2000);
