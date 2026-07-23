@@ -2,7 +2,7 @@
   "name": "cursor-usage-tracker",
   "displayName": "Cursor Token Tracker",
   "description": "Show Cursor AI spend and tokens in the status bar",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "nguyenvinhtieng",
   "author": {
     "name": "nguyenvinhtieng.vn"
