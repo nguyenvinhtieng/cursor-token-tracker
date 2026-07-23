@@ -1,13 +1,15 @@
 import * as vscode from 'vscode';
 import { UsageMetrics } from '../metrics/aggregator';
+import { ChatSessionDisplay } from '../metrics/chatSessionDisplay';
 import { getBudgetSettings, updateBudgetSettings, ChatAlertBackground } from '../config/budgetConfig';
-import { PeriodTotals } from '../metrics/format';
-import { buildThreadUsage } from '../session/threadIndex';
+import { getDisplaySettings, updateDisplaySettings } from '../config/displayConfig';
+import { exportEvents, openTranscriptPath } from '../export/exportUsage';
 import { renderDetailHtml } from './statusBar';
 
 export class DetailPanel implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
   private onSettingsSaved: (() => void) | undefined;
+  private metrics: UsageMetrics | undefined;
 
   setOnSettingsSaved(callback: () => void): void {
     this.onSettingsSaved = callback;
@@ -16,11 +18,13 @@ export class DetailPanel implements vscode.Disposable {
   show(
     _context: vscode.ExtensionContext,
     metrics: UsageMetrics,
-    sessionTotals: PeriodTotals,
+    chatSession?: ChatSessionDisplay,
+    activeTranscriptPath?: string,
   ): void {
+    this.metrics = metrics;
     const settings = getBudgetSettings();
-    const threads = buildThreadUsage(metrics.allEventsInWindow);
-    const html = renderDetailHtml(metrics, sessionTotals, settings, threads);
+    const display = getDisplaySettings();
+    const html = renderDetailHtml(metrics, settings, display, chatSession, activeTranscriptPath);
 
     if (this.panel) {
       this.panel.reveal(vscode.ViewColumn.One);
@@ -44,13 +48,22 @@ export class DetailPanel implements vscode.Disposable {
     });
   }
 
-  updateIfOpen(metrics: UsageMetrics, sessionTotals: PeriodTotals): void {
+  updateIfOpen(
+    metrics: UsageMetrics,
+    chatSession?: ChatSessionDisplay,
+    activeTranscriptPath?: string,
+  ): void {
+    this.metrics = metrics;
     if (!this.panel) {
       return;
     }
     const settings = getBudgetSettings();
-    const threads = buildThreadUsage(metrics.allEventsInWindow);
-    this.panel.webview.html = renderDetailHtml(metrics, sessionTotals, settings, threads);
+    const display = getDisplaySettings();
+    this.panel.webview.html = renderDetailHtml(metrics, settings, display, chatSession, activeTranscriptPath);
+  }
+
+  getMetrics(): UsageMetrics | undefined {
+    return this.metrics;
   }
 
   private async handleMessage(msg: {
@@ -58,23 +71,51 @@ export class DetailPanel implements vscode.Disposable {
     monthlyBudget?: number;
     chatSessionAlertThreshold?: number;
     chatAlertBackground?: ChatAlertBackground;
+    showBudgetPercent?: boolean;
+    showMonthlySpend?: boolean;
+    showBudgetRemaining?: boolean;
+    showTodaySpend?: boolean;
+    showChatSession?: boolean;
+    showTokens?: boolean;
+    showWorkspaceAggregate?: boolean;
+    format?: 'csv' | 'json';
+    transcriptPath?: string;
   }): Promise<void> {
-    if (msg.type !== 'saveSettings') {
+    if (msg.type === 'saveSettings') {
+      const monthlyBudget = Math.max(1, Number(msg.monthlyBudget) || 100);
+      const chatSessionAlertThreshold = Math.max(0, Number(msg.chatSessionAlertThreshold) || 0);
+      const chatAlertBackground = msg.chatAlertBackground ?? 'error';
+      const display = getDisplaySettings();
+      const budget = getBudgetSettings();
+
+      await updateBudgetSettings({
+        monthlyBudget,
+        chatSessionAlertThreshold,
+        chatAlertBackground,
+        showBudgetPercent: msg.showBudgetPercent ?? budget.showBudgetPercent,
+      });
+      await updateDisplaySettings({
+        showMonthlySpend: msg.showMonthlySpend ?? display.showMonthlySpend,
+        showBudgetRemaining: msg.showBudgetRemaining ?? display.showBudgetRemaining,
+        showTodaySpend: msg.showTodaySpend ?? display.showTodaySpend,
+        showChatSession: msg.showChatSession ?? display.showChatSession,
+        showTokens: msg.showTokens ?? display.showTokens,
+        showWorkspaceAggregate: msg.showWorkspaceAggregate ?? display.showWorkspaceAggregate,
+      });
+
+      vscode.window.showInformationMessage('Cursor Usage: settings saved.');
+      this.onSettingsSaved?.();
       return;
     }
 
-    const monthlyBudget = Math.max(1, Number(msg.monthlyBudget) || 100);
-    const chatSessionAlertThreshold = Math.max(0, Number(msg.chatSessionAlertThreshold) || 0);
-    const chatAlertBackground = msg.chatAlertBackground ?? 'error';
+    if (msg.type === 'export' && msg.format && this.metrics) {
+      await exportEvents(this.metrics.allEventsInWindow, msg.format);
+      return;
+    }
 
-    await updateBudgetSettings({
-      monthlyBudget,
-      chatSessionAlertThreshold,
-      chatAlertBackground,
-    });
-
-    vscode.window.showInformationMessage('Cursor Usage: alert settings saved.');
-    this.onSettingsSaved?.();
+    if (msg.type === 'openTranscript' && msg.transcriptPath) {
+      await openTranscriptPath(msg.transcriptPath);
+    }
   }
 
   dispose(): void {

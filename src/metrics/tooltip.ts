@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 import { UsageMetrics } from './aggregator';
 import { ChatSessionDisplay, formatChatSessionStatus } from './chatSessionDisplay';
 import { BudgetSettings, getUsagePercent, isChatSessionAlertExceeded, isLimitReached } from '../config/budgetConfig';
+import { DisplaySettings } from '../config/displayConfig';
+import { buildWorkspaceBreakdown } from '../session/threadIndex';
 import { PeriodTotals, formatDollars, formatTokens, parseEventCostDollars, parseEventTokens } from './format';
 
 export function buildTooltipMarkdown(
@@ -9,6 +11,7 @@ export function buildTooltipMarkdown(
   sessionTotals: PeriodTotals,
   settings: BudgetSettings,
   chatSession: ChatSessionDisplay,
+  display?: DisplaySettings,
 ): vscode.MarkdownString {
   const md = new vscode.MarkdownString(undefined, true);
   md.isTrusted = true;
@@ -36,9 +39,6 @@ export function buildTooltipMarkdown(
   if (settings.chatSessionAlertThreshold > 0 && !chatAlertExceeded) {
     md.appendMarkdown(` _(alert at ${formatDollars(settings.chatSessionAlertThreshold)})_`);
   }
-  if (chatSession.fromLastEvent) {
-    md.appendMarkdown(` _(latest API call — session counter still warming up)_`);
-  }
   md.appendMarkdown(`\n\n---\n\n`);
 
   md.appendMarkdown(`| Period | Spend | Tokens |\n`);
@@ -46,6 +46,17 @@ export function buildTooltipMarkdown(
   md.appendMarkdown(`| Today | ${formatDollars(metrics.today.cost)} | ${formatTokens(metrics.today.tokens)} |\n`);
   md.appendMarkdown(`| Last 7 days | ${formatDollars(metrics.last7d.cost)} | ${formatTokens(metrics.last7d.tokens)} |\n`);
   md.appendMarkdown(`| Last 30 days | ${formatDollars(metrics.last30d.cost)} | ${formatTokens(metrics.last30d.tokens)} |\n\n`);
+
+  if (display?.showWorkspaceAggregate) {
+    const workspaces = buildWorkspaceBreakdown(metrics.allEventsInWindow);
+    if (workspaces.length > 1) {
+      md.appendMarkdown(`**Workspaces (30d)**\n\n`);
+      for (const ws of workspaces) {
+        md.appendMarkdown(`- **${ws.name}** · ${formatDollars(ws.cost)} · ${formatTokens(ws.tokens)}\n`);
+      }
+      md.appendMarkdown(`\n`);
+    }
+  }
 
   md.appendMarkdown(`Billing cycle: ${cycleStart} → ${cycleEnd}\n\n`);
   md.appendMarkdown(`---\n\n`);

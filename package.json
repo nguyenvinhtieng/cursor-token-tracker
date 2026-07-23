@@ -56,8 +56,84 @@
       {
         "command": "cursorUsage.clearToken",
         "title": "Cursor Usage: Clear Saved Token"
+      },
+      {
+        "command": "cursorUsage.exportCsv",
+        "title": "Cursor Usage: Export CSV"
+      },
+      {
+        "command": "cursorUsage.exportJson",
+        "title": "Cursor Usage: Export JSON"
+      },
+      {
+        "command": "cursorUsage.openTranscript",
+        "title": "Cursor Usage: Open Transcript"
+      },
+      {
+        "command": "cursorUsage.history.filterPeriod",
+        "title": "Filter by Period",
+        "icon": "$(calendar)"
+      },
+      {
+        "command": "cursorUsage.history.filterModel",
+        "title": "Filter by Model",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "cursorUsage.history.clearFilters",
+        "title": "Clear Filters",
+        "icon": "$(clear-all)"
       }
     ],
+    "views": {
+      "explorer": [
+        {
+          "id": "cursorUsageHistory",
+          "name": "Usage History",
+          "when": "workspaceFolderCount >= 0"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "cursorUsage.history.filterPeriod",
+          "when": "view == cursorUsageHistory",
+          "group": "navigation@1"
+        },
+        {
+          "command": "cursorUsage.history.filterModel",
+          "when": "view == cursorUsageHistory",
+          "group": "navigation@2"
+        },
+        {
+          "command": "cursorUsage.history.clearFilters",
+          "when": "view == cursorUsageHistory",
+          "group": "navigation@3"
+        },
+        {
+          "command": "cursorUsage.exportCsv",
+          "when": "view == cursorUsageHistory",
+          "group": "navigation@4"
+        },
+        {
+          "command": "cursorUsage.exportJson",
+          "when": "view == cursorUsageHistory",
+          "group": "navigation@5"
+        },
+        {
+          "command": "cursorUsage.refresh",
+          "when": "view == cursorUsageHistory",
+          "group": "navigation@6"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "cursorUsage.openTranscript",
+          "when": "view == cursorUsageHistory && viewItem == usageEvent"
+        }
+      ]
+    },
     "configuration": {
       "title": "Cursor Usage Tracker",
       "properties": {
@@ -79,12 +155,37 @@
             "full"
           ],
           "default": "compact",
-          "description": "Deprecated — status bar always shows Monthly total | Today"
+          "description": "Deprecated — use individual status bar toggles in Settings"
+        },
+        "cursorUsage.showMonthlySpend": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show monthly spend ($used/$budget) on the status bar"
+        },
+        "cursorUsage.showBudgetRemaining": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show remaining budget ($X left) on the status bar"
+        },
+        "cursorUsage.showTodaySpend": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show today's spend on the status bar"
+        },
+        "cursorUsage.showChatSession": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show current chat session spend on the status bar"
+        },
+        "cursorUsage.showWorkspaceAggregate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show per-workspace usage breakdown in tooltip and detail panel when multiple folders are open"
         },
         "cursorUsage.showTokens": {
           "type": "boolean",
           "default": true,
-          "description": "Show token counts in tooltip and detail panel"
+          "description": "Show token counts on today and chat segments in the status bar"
         },
         "cursorUsage.monthlyBudget": {
           "type": "number",

@@ -4,9 +4,18 @@ import { CursorApiError, CursorUsageClient } from './api/client';
 import { getBudgetSettings } from './config/budgetConfig';
 import { fetchUsageMetrics, UsageMetrics } from './metrics/aggregator';
 import { formatDollars } from './metrics/format';
+import { exportEvents } from './export/exportUsage';
 import { ChatSessionTracker } from './session/chatSessionTracker';
 import { DetailPanel } from './ui/detailPanel';
 import { StatusBarController } from './ui/statusBar';
+import {
+  UsageHistoryTreeProvider,
+  clearHistoryFilters,
+  handleOpenTranscript,
+  pickModelFilter,
+  pickPeriodFilter,
+} from './ui/usageTreeView';
+import { UsageEvent } from './api/types';
 
 let refreshTimer: NodeJS.Timeout | undefined;
 let activeChatTimer: NodeJS.Timeout | undefined;
@@ -20,13 +29,29 @@ export function activate(context: vscode.ExtensionContext): void {
   const statusBar = new StatusBarController(context);
   const detailPanel = new DetailPanel();
   const sessionTracker = new ChatSessionTracker();
+  const historyTree = new UsageHistoryTreeProvider();
 
-  context.subscriptions.push(output, detailPanel, sessionTracker);
+  context.subscriptions.push(
+    output,
+    detailPanel,
+    sessionTracker,
+    vscode.window.registerTreeDataProvider('cursorUsageHistory', historyTree),
+  );
+
+  const pushStatusBar = (metrics: UsageMetrics): void => {
+    statusBar.update(
+      metrics,
+      sessionTracker.getActiveTranscriptPath(),
+      sessionTracker.getSessionStartMs(),
+      sessionTracker.isChatActive(),
+    );
+  };
 
   const applyMetrics = (metrics: UsageMetrics): void => {
-    statusBar.setChatActive(sessionTracker.isChatActive());
-    statusBar.update(metrics, sessionTracker.getSessionStartMs());
-    detailPanel.updateIfOpen(metrics, statusBar.getSessionTotals());
+    const activeTranscript = sessionTracker.getActiveTranscriptPath();
+    pushStatusBar(metrics);
+    detailPanel.updateIfOpen(metrics, statusBar.getChatSession(), activeTranscript);
+    historyTree.update(metrics);
     maybeNotifyChatAlert(sessionTracker.getSessionStartMs(), statusBar);
   };
 
@@ -74,9 +99,6 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
     isRefreshing = true;
-    // Only blank the bar to a spinner on the very first load. Background polls
-    // keep the current numbers visible to avoid flicker; the "thinking" spinner
-    // while a chat is active is handled separately in StatusBarController.update.
     if (!statusBar.getMetrics()) {
       statusBar.showLoading();
     }
@@ -94,7 +116,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const metrics = await fetchUsageMetrics(client);
       applyMetrics(metrics);
       output.appendLine(
-        `[${new Date().toISOString()}] Refreshed: today=$${metrics.today.cost.toFixed(2)} monthly=$${metrics.monthlyUsed.toFixed(2)} chat=$${statusBar.getSessionTotals().cost.toFixed(2)}`,
+        `[${new Date().toISOString()}] Refreshed: today=$${metrics.today.cost.toFixed(2)} monthly=$${metrics.monthlyUsed.toFixed(2)} chat=$${statusBar.getChatSession().cost.toFixed(2)}`,
       );
     } catch (err) {
       const message = err instanceof CursorApiError && err.status === 401
@@ -178,8 +200,7 @@ export function activate(context: vscode.ExtensionContext): void {
     scheduleActiveChatRefresh();
     const metrics = statusBar.getMetrics();
     if (metrics) {
-      statusBar.setChatActive(true);
-      statusBar.update(metrics, sessionTracker.getSessionStartMs());
+      pushStatusBar(metrics);
     }
   });
 
@@ -221,15 +242,52 @@ export function activate(context: vscode.ExtensionContext): void {
         void refresh().then(() => {
           const updated = statusBar.getMetrics();
           if (updated) {
-            detailPanel.show(context, updated, statusBar.getSessionTotals());
+            detailPanel.show(
+              context,
+              updated,
+              statusBar.getChatSession(),
+              sessionTracker.getActiveTranscriptPath(),
+            );
           }
         });
         return;
       }
-      detailPanel.show(context, metrics, statusBar.getSessionTotals());
+      detailPanel.show(
+        context,
+        metrics,
+        statusBar.getChatSession(),
+        sessionTracker.getActiveTranscriptPath(),
+      );
     }),
     vscode.commands.registerCommand('cursorUsage.openDashboard', () => {
       void vscode.commands.executeCommand('cursorUsage.showDetails');
+    }),
+    vscode.commands.registerCommand('cursorUsage.history.filterPeriod', () => pickPeriodFilter(historyTree)),
+    vscode.commands.registerCommand('cursorUsage.history.filterModel', () => pickModelFilter(historyTree)),
+    vscode.commands.registerCommand('cursorUsage.history.clearFilters', () => clearHistoryFilters(historyTree)),
+    vscode.commands.registerCommand('cursorUsage.exportCsv', async () => {
+      const metrics = statusBar.getMetrics() ?? detailPanel.getMetrics();
+      if (!metrics) {
+        await refresh();
+      }
+      const data = statusBar.getMetrics() ?? detailPanel.getMetrics();
+      if (data) {
+        await exportEvents(data.allEventsInWindow, 'csv');
+      }
+    }),
+    vscode.commands.registerCommand('cursorUsage.exportJson', async () => {
+      const metrics = statusBar.getMetrics() ?? detailPanel.getMetrics();
+      if (!metrics) {
+        await refresh();
+      }
+      const data = statusBar.getMetrics() ?? detailPanel.getMetrics();
+      if (data) {
+        await exportEvents(data.allEventsInWindow, 'json');
+      }
+    }),
+    vscode.commands.registerCommand('cursorUsage.openTranscript', (event: UsageEvent) => handleOpenTranscript(event)),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      sessionTracker.startWatching();
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('cursorUsage.refreshIntervalSeconds')) {

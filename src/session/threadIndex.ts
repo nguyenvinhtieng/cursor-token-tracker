@@ -1,8 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { UsageEvent } from '../api/types';
-import { parseEventCostDollars, parseEventTokens } from '../metrics/format';
-import { getTranscriptDirForWorkspace } from './chatSessionTracker';
+import { PeriodTotals, parseEventCostDollars, parseEventTokens } from '../metrics/format';
+import {
+  getTranscriptDirsForAllWorkspaces,
+} from './chatSessionTracker';
 
 // Billing events carry no thread id, so cost is attributed to threads by
 // timestamp: an event belongs to the thread whose active time-range covers it.
@@ -13,7 +15,9 @@ const ATTRIBUTION_BUFFER_MS = 2 * 60 * 1000; // billing events lag behind activi
 
 export interface ThreadUsage {
   id: string;
+  filePath: string;
   title: string;
+  workspaceName?: string;
   startMs: number;
   lastActivityMs: number;
   cost: number;
@@ -28,6 +32,7 @@ interface ThreadMeta {
   title: string;
   startMs: number;
   lastActivityMs: number;
+  workspaceName?: string;
 }
 
 function getFileBirthTimeMs(filePath: string): number {
@@ -144,22 +149,103 @@ function attributeEvent(threads: ThreadMeta[], eventMs: number): ThreadMeta | un
   return best;
 }
 
-export function buildThreadUsage(events: UsageEvent[], limit = 8): ThreadUsage[] {
-  const transcriptDir = getTranscriptDirForWorkspace();
-  if (!transcriptDir) {
+export function listAllThreadMeta(): ThreadMeta[] {
+  const workspaces = getTranscriptDirsForAllWorkspaces();
+  const threads: ThreadMeta[] = [];
+  for (const ws of workspaces) {
+    for (const thread of listThreadMeta(ws.dir)) {
+      threads.push({ ...thread, workspaceName: ws.name });
+    }
+  }
+  return threads;
+}
+
+export function findTranscriptPathForEvent(event: UsageEvent): string | undefined {
+  const eventMs = parseInt(event.timestamp, 10);
+  if (Number.isNaN(eventMs)) {
+    return undefined;
+  }
+  return attributeEvent(listAllThreadMeta(), eventMs)?.filePath;
+}
+
+export interface WorkspaceUsageBreakdown {
+  name: string;
+  cost: number;
+  tokens: number;
+  eventCount: number;
+}
+
+export function buildWorkspaceBreakdown(events: UsageEvent[], sinceMs = 0): WorkspaceUsageBreakdown[] {
+  const workspaces = getTranscriptDirsForAllWorkspaces();
+  if (workspaces.length === 0) {
     return [];
   }
 
-  const meta = listThreadMeta(transcriptDir);
+  const totals = new Map<string, WorkspaceUsageBreakdown>();
+  for (const ws of workspaces) {
+    totals.set(ws.name, { name: ws.name, cost: 0, tokens: 0, eventCount: 0 });
+  }
+
+  for (const event of events) {
+    const eventMs = parseInt(event.timestamp, 10);
+    if (Number.isNaN(eventMs) || eventMs < sinceMs) {
+      continue;
+    }
+    const owner = attributeEvent(listAllThreadMeta(), eventMs);
+    if (!owner?.workspaceName) {
+      continue;
+    }
+    const row = totals.get(owner.workspaceName);
+    if (!row) {
+      continue;
+    }
+    row.cost += parseEventCostDollars(event);
+    row.tokens += parseEventTokens(event);
+    row.eventCount += 1;
+  }
+
+  return [...totals.values()].filter((w) => w.eventCount > 0).sort((a, b) => b.cost - a.cost);
+}
+
+export function computeThreadTotalsForPath(
+  events: UsageEvent[],
+  transcriptPath: string,
+  sinceMs = 0,
+): PeriodTotals {
+  const allMeta = listAllThreadMeta();
+  if (!allMeta.some((t) => t.filePath === transcriptPath)) {
+    return { cost: 0, tokens: 0, eventCount: 0 };
+  }
+
+  const totals: PeriodTotals = { cost: 0, tokens: 0, eventCount: 0 };
+  for (const event of events) {
+    const eventMs = parseInt(event.timestamp, 10);
+    if (Number.isNaN(eventMs) || eventMs < sinceMs) {
+      continue;
+    }
+    const owner = attributeEvent(allMeta, eventMs);
+    if (owner?.filePath === transcriptPath) {
+      totals.cost += parseEventCostDollars(event);
+      totals.tokens += parseEventTokens(event);
+      totals.eventCount += 1;
+    }
+  }
+  return totals;
+}
+
+export function buildThreadUsage(events: UsageEvent[], limit = 8): ThreadUsage[] {
+  const meta = listAllThreadMeta();
   if (meta.length === 0) {
     return [];
   }
 
-  const usageById = new Map<string, ThreadUsage>();
+  const usageByPath = new Map<string, ThreadUsage>();
   for (const t of meta) {
-    usageById.set(t.id, {
+    usageByPath.set(t.filePath, {
       id: t.id,
+      filePath: t.filePath,
       title: t.title,
+      workspaceName: t.workspaceName,
       startMs: t.startMs,
       lastActivityMs: t.lastActivityMs,
       cost: 0,
@@ -178,7 +264,7 @@ export function buildThreadUsage(events: UsageEvent[], limit = 8): ThreadUsage[]
     if (!owner) {
       continue;
     }
-    const usage = usageById.get(owner.id);
+    const usage = usageByPath.get(owner.filePath);
     if (!usage) {
       continue;
     }
@@ -190,7 +276,7 @@ export function buildThreadUsage(events: UsageEvent[], limit = 8): ThreadUsage[]
     }
   }
 
-  return [...usageById.values()]
+  return [...usageByPath.values()]
     .filter((t) => t.eventCount > 0)
     .sort((a, b) => b.lastActivityMs - a.lastActivityMs)
     .slice(0, limit);

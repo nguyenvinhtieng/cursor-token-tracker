@@ -8,12 +8,14 @@ function slugifyWorkspaceFolder(folder: string): string {
   return folder.replace(/^[/\\]+/, '').replace(/[/\\:.]/g, '-');
 }
 
-export function getTranscriptDirForWorkspace(): string | undefined {
-  const folders = vscode.workspace.workspaceFolders;
-  if (!folders || folders.length === 0) {
-    return undefined;
-  }
-  const slug = slugifyWorkspaceFolder(folders[0].uri.fsPath);
+export interface WorkspaceTranscriptDir {
+  name: string;
+  folderPath: string;
+  dir: string;
+}
+
+export function getTranscriptDirForFolder(folderPath: string): string | undefined {
+  const slug = slugifyWorkspaceFolder(folderPath);
   const home = os.homedir();
   const candidates = [
     path.join(home, '.cursor', 'projects', slug, 'agent-transcripts'),
@@ -26,10 +28,9 @@ export function getTranscriptDirForWorkspace(): string | undefined {
     }
   }
 
-  // Try to find by partial match in projects dir
   const projectsDir = path.join(home, '.cursor', 'projects');
   if (fs.existsSync(projectsDir)) {
-    const workspaceName = path.basename(folders[0].uri.fsPath).toLowerCase();
+    const workspaceName = path.basename(folderPath).toLowerCase();
     for (const entry of fs.readdirSync(projectsDir)) {
       if (entry.toLowerCase().includes(workspaceName)) {
         const transcriptDir = path.join(projectsDir, entry, 'agent-transcripts');
@@ -41,6 +42,30 @@ export function getTranscriptDirForWorkspace(): string | undefined {
   }
 
   return undefined;
+}
+
+export function getTranscriptDirForWorkspace(): string | undefined {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) {
+    return undefined;
+  }
+  return getTranscriptDirForFolder(folders[0].uri.fsPath);
+}
+
+export function getTranscriptDirsForAllWorkspaces(): WorkspaceTranscriptDir[] {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) {
+    return [];
+  }
+
+  const result: WorkspaceTranscriptDir[] = [];
+  for (const folder of folders) {
+    const dir = getTranscriptDirForFolder(folder.uri.fsPath);
+    if (dir) {
+      result.push({ name: folder.name, folderPath: folder.uri.fsPath, dir });
+    }
+  }
+  return result;
 }
 
 function getFileBirthTimeMs(filePath: string): number {
@@ -83,7 +108,7 @@ function findNewestTranscript(transcriptDir: string): { path: string; startMs: n
 
 export class ChatSessionTracker implements vscode.Disposable {
   private sessionStartMs: number;
-  private watcher: vscode.FileSystemWatcher | undefined;
+  private watchers: vscode.FileSystemWatcher[] = [];
   private activeTranscript: string | undefined;
   private onSessionChange: (() => void) | undefined;
   private onActivity: (() => void) | undefined;
@@ -91,12 +116,15 @@ export class ChatSessionTracker implements vscode.Disposable {
   private lastActivityMs = 0;
 
   constructor() {
-    // Track spend from extension activation until a transcript session is detected.
-    this.sessionStartMs = Date.now() - 30 * 60 * 1000;
+    this.sessionStartMs = Date.now();
   }
 
   getSessionStartMs(): number {
     return this.sessionStartMs;
+  }
+
+  getActiveTranscriptPath(): string | undefined {
+    return this.activeTranscript;
   }
 
   isChatActive(): boolean {
@@ -107,8 +135,9 @@ export class ChatSessionTracker implements vscode.Disposable {
   }
 
   reset(): void {
+    // Keep the active transcript so thread attribution still works; only count
+    // billing events after this point toward the session total.
     this.sessionStartMs = Date.now();
-    this.activeTranscript = undefined;
     this.lastActivityMs = 0;
   }
 
@@ -122,13 +151,17 @@ export class ChatSessionTracker implements vscode.Disposable {
 
   startWatching(): void {
     this.stopWatching();
-    const transcriptDir = getTranscriptDirForWorkspace();
-    if (!transcriptDir) {
+    const workspaceDirs = getTranscriptDirsForAllWorkspaces();
+    if (workspaceDirs.length === 0) {
       return;
     }
 
-    const pattern = new vscode.RelativePattern(transcriptDir, '**/*.jsonl');
-    this.watcher = vscode.workspace.createFileSystemWatcher(pattern);
+    const watchers: vscode.FileSystemWatcher[] = [];
+    for (const { dir } of workspaceDirs) {
+      const pattern = new vscode.RelativePattern(dir, '**/*.jsonl');
+      watchers.push(vscode.workspace.createFileSystemWatcher(pattern));
+    }
+    this.watchers = watchers;
 
     const notifyActivity = () => {
       this.lastActivityMs = Date.now();
@@ -164,19 +197,32 @@ export class ChatSessionTracker implements vscode.Disposable {
       notifyActivity();
     };
 
-    this.watcher.onDidCreate(handleCreate);
-    this.watcher.onDidChange(handleChange);
+    for (const w of watchers) {
+      w.onDidCreate(handleCreate);
+      w.onDidChange(handleChange);
+    }
 
-    const current = findNewestTranscript(transcriptDir);
-    if (current) {
-      this.activeTranscript = current.path;
-      this.sessionStartMs = current.startMs;
+    let newest: { path: string; startMs: number; mtime: number } | undefined;
+    for (const { dir } of workspaceDirs) {
+      const current = findNewestTranscript(dir);
+      if (current) {
+        const mtime = fs.statSync(current.path).mtimeMs;
+        if (!newest || mtime > newest.mtime) {
+          newest = { path: current.path, startMs: current.startMs, mtime };
+        }
+      }
+    }
+    if (newest) {
+      this.activeTranscript = newest.path;
+      this.sessionStartMs = newest.startMs;
     }
   }
 
   stopWatching(): void {
-    this.watcher?.dispose();
-    this.watcher = undefined;
+    for (const w of this.watchers) {
+      w.dispose();
+    }
+    this.watchers = [];
   }
 
   dispose(): void {
